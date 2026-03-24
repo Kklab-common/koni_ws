@@ -125,11 +125,19 @@ class CylinderPositionController(Node):
         self.pid_pH = PIDController()
         self.pid_pR = PIDController()
 
+        # パブリッシャ
         self.pub_valve = self.create_publisher(
             Float32MultiArray, '/actuators/valve_voltage', 10)
         self.pub_debug = self.create_publisher(
             Float32MultiArray, '/debug/cylinder_controller', 10)
+        
+        # 目標軌道と現在位置の専用トピックを追加
+        self.pub_target_pos = self.create_publisher(
+            Float32, '/control/target_position', 10)
+        self.pub_current_rel_pos = self.create_publisher(
+            Float32, '/control/current_rel_position', 10)
 
+        # サブスクライバ (トピック名はPython版のまま維持)
         self.create_subscription(
             Float32, '/sensors/cylinder_position', self._cb_pos, 10)
         self.create_subscription(
@@ -255,6 +263,15 @@ class CylinderPositionController(Node):
         target_force = self.pid_pos.update(center, x_rel, dt)
         self._apply_force_to_valves(target_force, dt)
 
+        # 専用トピックに出力
+        msg_tgt = Float32()
+        msg_tgt.data = float(center)
+        self.pub_target_pos.publish(msg_tgt)
+
+        msg_cur = Float32()
+        msg_cur.data = float(x_rel)
+        self.pub_current_rel_pos.publish(msg_cur)
+
         # 安定判定
         if abs(x_rel - center) < pos_thresh:
             if self.pressurize_settle_start is None:
@@ -275,9 +292,6 @@ class CylinderPositionController(Node):
     def _state_running(self):
         """
         正弦波追従制御。
-        外側ループ: 位置PID → 目標推力
-        内側ループ: 圧力PI → バルブ電圧
-        PAMの反力は時変外乱としてPIDが吸収
         """
         now = time.time()
         dt = now - self.last_time
@@ -293,7 +307,7 @@ class CylinderPositionController(Node):
         elapsed = now - self.run_start_time
         omega = 2.0 * math.pi * freq
 
-        # 目標軌道
+        # 目標軌道 (先輩の compute_sine_target と同じ)
         x_ref = center + amp * math.sin(omega * elapsed)
 
         # 位置PID → 目標推力
@@ -303,56 +317,57 @@ class CylinderPositionController(Node):
         # 推力 → 圧力 → バルブ
         self._apply_force_to_valves(target_force, dt)
 
-        # デバッグ出力
-        # msg = Float32MultiArray()
-        # msg.data = [
-        #     float(x_ref),                # [0] 目標位置 [m]
-        #     float(x_rel),                # [1] 現在位置 [m]
-        #     float(x_ref - x_rel),        # [2] 位置偏差 [m]
-        #     float(target_force),         # [3] 目標推力 [N]
-        #     float(self.current_pH),      # [4] ヘッド圧 [kPa]
-        #     float(self.current_pR),      # [5] ロッド圧 [kPa]
-        #     float(freq),                 # [6] 現在の周波数 [Hz]
-        # ]
-        # self.pub_debug.publish(msg)
+        # 専用トピックに出力 (PlotJuggler用)
+        msg_tgt = Float32()
+        msg_tgt.data = float(x_ref)
+        self.pub_target_pos.publish(msg_tgt)
 
-    # 推力→圧力→バルブ変換
+        msg_cur = Float32()
+        msg_cur.data = float(x_rel)
+        self.pub_current_rel_pos.publish(msg_cur)
+
+
+    # 推力→圧力→バルブ変換 (先輩のロジックを完全移植！)
     def _apply_force_to_valves(self, target_force_N, dt):
         """
-        目標推力を両室の圧力指令に変換し、
-        圧力PIでバルブ電圧を算出して送信する。
-
-        バイアス圧を両室にかけた状態を基準とし、
-        目標力に応じて一方を加圧・他方を減圧する。
+        ★先輩の convert_force_to_target_pressures ロジック
+        基本は両室ともベース圧力を維持し、
+        動かしたい方向の部屋「だけ」圧力をプラスする方式。
         """
-        P_bias = self.get_parameter('base_pressure_kpa').value
-        P_supply = self.get_parameter('supply_pressure_kpa').value
+        base_pressure_kpa = self.get_parameter('base_pressure_kpa').value
+        max_pressure_kpa = self.get_parameter('supply_pressure_kpa').value
 
-        # N → kPa: F[N] / A[m^2] = [Pa], /1000 → [kPa]
-        P_bias_H = self.get_parameter('base_pressure_kpa').value
-        # ロッド側は面積が小さい分、ベース圧力を高めにして釣り合わせる
-        P_bias_R = P_bias_H * (self.AREA_HEAD / self.AREA_ROD)
+        # 1. まずは両室ともベース圧力にする
+        target_pH = base_pressure_kpa
+        target_pR = base_pressure_kpa
 
-        # N → kPa: F[N] / A[m^2] = [Pa], /1000 → [kPa]
-        target_pH = P_bias_H + (target_force_N / self.AREA_HEAD / 1000.0 / 2.0)
-        target_pR = P_bias_R - (target_force_N / self.AREA_ROD / 1000.0 / 2.0)
+        # 2. 推力の向きに応じて、片方だけ圧力を足す
+        if target_force_N > 0.0:
+            # 伸ばす方向: ヘッド側に圧力を足す (F = P * A -> P = F / A / 1000)
+            target_pH += target_force_N / self.AREA_HEAD / 1000.0
+        elif target_force_N < 0.0:
+            # 縮む方向: ロッド側に圧力を足す (負の力なので - を付けて正にする)
+            target_pR += (-target_force_N) / self.AREA_ROD / 1000.0
 
-        # クランプ
-        target_pH = max(0.0, min(P_supply, target_pH))
-        target_pR = max(0.0, min(P_supply, target_pR))
+        # 3. 安全のためのクランプ
+        target_pH = max(0.0, min(max_pressure_kpa, target_pH))
+        target_pR = max(0.0, min(max_pressure_kpa, target_pR))
 
-        # 圧力PI → バルブ電圧
+        # 4. 圧力PI → バルブ電圧
         uH = self.pid_pH.update(target_pH, self.current_pH, dt)
         uR = self.pid_pR.update(target_pR, self.current_pR, dt)
 
         self._send_valve(self.VALVE_NEUTRAL + uH, self.VALVE_NEUTRAL + uR)
+
+        # デバッグ出力
         msg_debug = Float32MultiArray()
         msg_debug.data = [
             float(target_pH),       # [0] 目標ヘッド圧 (kPa)
             float(self.current_pH), # [1] 現在ヘッド圧 (kPa)
             float(target_pR),       # [2] 目標ロッド圧 (kPa)
             float(self.current_pR), # [3] 現在ロッド圧 (kPa)
-            float(uH)               # [4] バルブ加算電圧 (V)
+            float(uH),              # [4] ヘッド側バルブ加算電圧 (V)
+            float(uR)               # [5] ロッド側バルブ加算電圧 (V)
         ]
         self.pub_debug.publish(msg_debug)
 
