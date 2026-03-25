@@ -21,7 +21,7 @@ class SensorInterpreterNode(Node):
         # エンコーダ
         self.declare_parameter('cnt_topic', '/cnt3204mtlpe')
         self.declare_parameter('encoder_index', 0)
-        self.declare_parameter('meters_per_count', 0.00004)
+        self.declare_parameter('meters_per_count', 0.00001)
         self.declare_parameter('reverse_direction', False)
         self.declare_parameter('cutoff_hz_encoder', 20.0)
 
