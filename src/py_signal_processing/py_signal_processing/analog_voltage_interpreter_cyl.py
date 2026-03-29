@@ -36,8 +36,8 @@ class SensorInterpreterNode(Node):
         self.declare_parameter('cutoff_hz_pressure', 20.0)
 
         # ロードセル
-        self.declare_parameter('loadcell_plus_index', 6)
-        self.declare_parameter('loadcell_minus_index', 7)
+        self.declare_parameter('loadcell_plus_index', 2)
+        self.declare_parameter('loadcell_minus_index', 3)
         self.declare_parameter('v0_loadcell', 0.0)
         self.declare_parameter('kg_per_V_loadcell', 7.9186)
         self.declare_parameter('gravity_acceleration', 9.80665)
