@@ -64,9 +64,9 @@ def generate_launch_description():
                 'inner_rate_hz': 1000.0,
 
                 # 正弦波軌道
-                'sine_amplitude_m':  0.010,   # 振幅 [m]  （4 mm）
+                'sine_amplitude_m':  0.0070,   # 振幅 [m]  （4 mm）
                 'sine_freq_hz':      1.0,     # 周波数 [Hz]
-                'center_position_m': 0.045,   # 中心位置 [m]
+                'center_position_m': 0.037,   # 中心位置 [m]
 
                 # PRESSURIZE ランプ軌道
                 # 原点から center_position_m まで近づく速度 [m/s]。
@@ -79,10 +79,10 @@ def generate_launch_description():
                 'supply_pressure_kpa': 600.0,  # 圧力指令の上限（供給圧以下に設定）[kPa]
 
                 # 位置ループPID(外側)
-                'pos_kp': 1900.0,   # 比例ゲイン [N/m]
-                'pos_ki': 1200.0,   # 積分ゲイン [N/(m·s)]
+                'pos_kp': 1500.0,   # 比例ゲイン [N/m] #1900
+                'pos_ki': 200.0,   # 積分ゲイン [N/(m·s)] #1200
                 'pos_kd': 0.0,   # 微分ゲイン [N·s/m]
-                'pos_td': 0.05,  # 微分フィルタ時定数 [s]
+                'pos_td': 1.0,  # 微分フィルタ時定数 [s]
                 'pos_output_limit': 1000.0,  # 推力指令の上限 [N]
 
                 # 圧力ループ PI（内側）
@@ -101,6 +101,8 @@ def generate_launch_description():
                 # PRESSURIZE → RUNNING 遷移
                 'pressurize_pos_threshold':   0.002,  # 中心との誤差がこれ以下で収束とみなす [m]
                 'pressurize_settle_duration': 0.5,    # 収束判定の継続時間 [s]
+                'use_loadcell_compensation': True,  # ロードセル補償を使用するかどうか
+                'loadcell_ff_gain': 0.4
             }],
         ),
     ])
