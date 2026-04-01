@@ -61,40 +61,40 @@ def generate_launch_description():
                 # 正弦波軌道
                 # x_0（PAM自然位置）が最大端。そこから -2A まで縮む。
                 # 全ストローク = 2 * sine_amplitude_m = 14 mm
-                'sine_amplitude_m': 0.0070,
+                'sine_amplitude_m': 0.006,
                 'sine_freq_hz':     1.0,
 
                 # 振幅ランプ（0 → sine_amplitude_m に到達する速度）
                 # 0.005 m/s → 7 mm 振幅に約 1.4 秒で到達
-                'sine_amp_ramp_rate_m_s': 0.005,
+                'sine_amp_ramp_rate_m_s': 0.0005,
 
                 # 圧力
                 'base_pressure_kpa':   150.0,
-                'supply_pressure_kpa': 600.0,
+                'supply_pressure_kpa': 640.0,
 
                 # 位置ループ PID（外側）
-                'pos_kp': 1500.0,
-                'pos_ki': 200.0,
+                'pos_kp': 3000.0,
+                'pos_ki': 0.0,
                 'pos_kd': 0.0,
                 'pos_td': 1.0,
                 'pos_output_limit': 1000.0,
 
                 # 圧力ループ PI（内側）
-                'pres_kp': 0.03,
+                'pres_kp': 0.015, #0.035
                 'pres_ki': 0.02,
                 'pres_kd': 0.0,
                 'pres_td': 0.01,
                 'pres_output_limit': 4.9,
 
                 # ホーミング（両室排気 → PAM自然位置を検出）
-                'homing_settle_threshold': 0.0002,
-                'homing_settle_duration':  1.0,
-                'homing_startup_wait':     0.5,
+                'homing_settle_threshold': 0.002,
+                'homing_settle_duration':  2.0,
+                'homing_startup_wait':     2.5,
 
                 # ロードセル補償（まずはオフで試す）
                 'use_loadcell_compensation': False,
-                'loadcell_ff_gain': 0.4,
-                'loadcell_timeout_s': 0.2,
+                'loadcell_ff_gain': 1.0,
+                'loadcell_timeout_s': 3.2,
             }],
         ),
     ])

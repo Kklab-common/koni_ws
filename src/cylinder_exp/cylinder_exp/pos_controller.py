@@ -259,7 +259,7 @@ class CylinderPositionController(Node):
         self._send_valve(self.VALVE_NEUTRAL, self.VALVE_NEUTRAL)
 
     def _send_all_exhaust(self):
-        self._send_valve(0.0, 0.0)
+        self._send_valve(0.0, 5.2)
 
     def _get_relative_pos(self):
         return self.current_pos - self.x_0
@@ -420,8 +420,8 @@ class CylinderPositionController(Node):
 
         A = self.current_sine_amp
 
-        # x_0 が最大端、そこから縮む方向のみ
-        x_ref_rel = -A * (1.0 - math.cos(2.0 * math.pi * freq * elapsed))
+        # x_0 が最大端、そこから伸びる向のみ
+        x_ref_rel = A * (1.0 - math.cos(2.0 * math.pi * freq * elapsed))
 
         x_rel = self._get_relative_pos()
 
