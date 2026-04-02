@@ -62,20 +62,21 @@ class CylinderPositionController(Node):
     空気圧シリンダ位置制御ノード（PAM接続版）。
 
     ホーミング:
-        両室大気開放 (0V, 0V) → PAM引張力で伸び切った位置 = x_0
-        x_0 は正弦波の最大端。
+        ヘッド側 homing_head_voltage / ロッド側 0V
+        → ロッド伸び切り位置 = x_0 = 正弦波の最小端
 
-    RUNNING（ホーミング直後に開始）:
-        x_ref_rel = -A * (1 - cos(ωt))
+    RUNNING:
+        x_ref_rel = A * (1 - cos(ωt))
+        x_0(最小端) → x_0+2A(最大端) を往復
 
-        振幅 A は 0 から徐々にランプで増加するため、
-        x_0 付近から滑らかに振動が始まる。
+    力の符号規約:
+        正 = 押し出し方向（右, ロッド伸び, PAM縮み）
+        負 = 引っ込み方向（左, ロッド縮み, PAM伸び）
 
-        t=0    → x_ref_rel =  0    (x_0: PAM自然位置, 最大端)
-        t=T/4  → x_ref_rel = -A    (振動中心)
-        t=T/2  → x_ref_rel = -2A   (最小端)
-        t=3T/4 → x_ref_rel = -A    (振動中心)
-        t=T    → x_ref_rel =  0    (x_0 に戻る)
+    ロードセル符号規約:
+        PAMに引っ張られている時 → 負
+        F_target = F_pid - gain * F_loadcell
+        （F_loadcell が負 → 補償力は正 → 押し出し方向に加算 → 正しい）
     """
 
     def __init__(self):
@@ -97,37 +98,33 @@ class CylinderPositionController(Node):
         self.declare_parameter('outer_rate_hz', 500.0)
         self.declare_parameter('inner_rate_hz', 1000.0)
 
-        # 軌道
         self.declare_parameter('sine_amplitude_m', 0.020)
         self.declare_parameter('sine_freq_hz', 0.5)
-
-        # 振幅ランプ
         self.declare_parameter('sine_amp_ramp_rate_m_s', 0.010)
 
-        # 圧力
         self.declare_parameter('base_pressure_kpa', 250.0)
         self.declare_parameter('supply_pressure_kpa', 600.0)
 
-        # 位置ループ PID（外側）
         self.declare_parameter('pos_kp', 2000.0)
         self.declare_parameter('pos_ki', 0.0)
         self.declare_parameter('pos_kd', 0.0)
         self.declare_parameter('pos_td', 0.005)
         self.declare_parameter('pos_output_limit', 1000.0)
 
-        # 圧力ループ PI（内側）
+        self.declare_parameter('gain_ramp_start_ratio', 0.1)
+        self.declare_parameter('gain_ramp_duration_s', 3.0)
+
         self.declare_parameter('pres_kp', 0.02)
         self.declare_parameter('pres_ki', 0.005)
         self.declare_parameter('pres_kd', 0.0)
         self.declare_parameter('pres_td', 0.01)
         self.declare_parameter('pres_output_limit', 4.9)
 
-        # ホーミング
         self.declare_parameter('homing_settle_threshold', 0.0002)
         self.declare_parameter('homing_settle_duration', 1.0)
         self.declare_parameter('homing_startup_wait', 0.5)
+        self.declare_parameter('homing_head_voltage', 6.0)
 
-        # ロードセル補償
         self.declare_parameter('use_loadcell_compensation', False)
         self.declare_parameter('loadcell_ff_gain', 0.3)
         self.declare_parameter('loadcell_timeout_s', 0.2)
@@ -155,30 +152,70 @@ class CylinderPositionController(Node):
         self._last_pos_force_N = 0.0
         self._last_loadcell_comp_N = 0.0
 
-        # ホーミング用
         self.homing_start_time   = None
         self.homing_last_pos     = None
         self.homing_settle_start = None
 
-        # RUNNING 用
         self.current_sine_amp = 0.0
         self.run_start_time   = None
+
+        self._current_gain_ratio = 0.0
 
         self._outer_last_time = None
         self._target_force_N  = 0.0
 
+        # 内側ループ出力保持（デバッグ用）
+        self._last_target_pH = 0.0
+        self._last_target_pR = 0.0
+        self._last_uH = 0.0
+        self._last_uR = 0.0
+
         # ── PIDコントローラ ───────────────────────────────────────
         self._init_pid()
 
-        # ── パブリッシャ ──────────────────────────────────────────
+        # ── パブリッシャ（個別名前付きトピック） ──────────────────
         self.pub_valve = self.create_publisher(
             Float32MultiArray, '/actuators/valve_voltage', 10)
-        self.pub_debug = self.create_publisher(
-            Float32MultiArray, '/debug/cylinder_controller', 10)
+
+        # 位置系
         self.pub_target_pos = self.create_publisher(
-            Float32, '/control/target_position', 10)
+            Float32, '/debug/target_position_m', 10)
         self.pub_current_rel_pos = self.create_publisher(
-            Float32, '/control/current_rel_position', 10)
+            Float32, '/debug/current_rel_position_m', 10)
+        self.pub_position_error = self.create_publisher(
+            Float32, '/debug/position_error_m', 10)
+
+        # 力系
+        self.pub_target_force = self.create_publisher(
+            Float32, '/debug/target_force_N', 10)
+        self.pub_pid_force = self.create_publisher(
+            Float32, '/debug/pid_force_N', 10)
+        self.pub_loadcell_comp = self.create_publisher(
+            Float32, '/debug/loadcell_comp_N', 10)
+        self.pub_loadcell_raw = self.create_publisher(
+            Float32, '/debug/loadcell_raw_N', 10)
+
+        # 圧力系
+        self.pub_target_pH = self.create_publisher(
+            Float32, '/debug/target_pressure_head_kPa', 10)
+        self.pub_target_pR = self.create_publisher(
+            Float32, '/debug/target_pressure_rod_kPa', 10)
+        self.pub_current_pH = self.create_publisher(
+            Float32, '/debug/current_pressure_head_kPa', 10)
+        self.pub_current_pR = self.create_publisher(
+            Float32, '/debug/current_pressure_rod_kPa', 10)
+
+        # バルブ系
+        self.pub_valve_uH = self.create_publisher(
+            Float32, '/debug/valve_delta_head_V', 10)
+        self.pub_valve_uR = self.create_publisher(
+            Float32, '/debug/valve_delta_rod_V', 10)
+
+        # ゲインスケジューリング
+        self.pub_gain_ratio = self.create_publisher(
+            Float32, '/debug/gain_ratio', 10)
+        self.pub_sine_amp = self.create_publisher(
+            Float32, '/debug/current_sine_amplitude_m', 10)
 
         # ── サブスクライバ ────────────────────────────────────────
         self.create_subscription(
@@ -197,7 +234,7 @@ class CylinderPositionController(Node):
         self.get_logger().info(
             f"Controller initialized. "
             f"outer={outer_rate_hz:.0f}Hz / inner={inner_rate_hz:.0f}Hz. "
-            f"HOMING → RUNNING (no PRESSURIZE). "
+            f"Homing: head={self.get_parameter('homing_head_voltage').value}V, rod=0V. "
             f"Waiting for sensors..."
         )
 
@@ -212,9 +249,14 @@ class CylinderPositionController(Node):
         self._update_gains()
 
     def _update_gains(self):
-        self.pid_pos.kp = float(self.get_parameter('pos_kp').value)
-        self.pid_pos.ki = float(self.get_parameter('pos_ki').value)
-        self.pid_pos.kd = float(self.get_parameter('pos_kd').value)
+        final_kp = float(self.get_parameter('pos_kp').value)
+        final_ki = float(self.get_parameter('pos_ki').value)
+        final_kd = float(self.get_parameter('pos_kd').value)
+
+        r = self._current_gain_ratio
+        self.pid_pos.kp = final_kp * r
+        self.pid_pos.ki = final_ki * r
+        self.pid_pos.kd = final_kd * r
         self.pid_pos.td = float(self.get_parameter('pos_td').value)
         self.pid_pos.output_limit = float(self.get_parameter('pos_output_limit').value)
 
@@ -258,13 +300,31 @@ class CylinderPositionController(Node):
     def _send_all_neutral(self):
         self._send_valve(self.VALVE_NEUTRAL, self.VALVE_NEUTRAL)
 
-    def _send_all_exhaust(self):
-        self._send_valve(0.0, 5.2)
-
     def _get_relative_pos(self):
         return self.current_pos - self.x_0
 
+    def _update_gain_ramp(self, now):
+        start_ratio = float(self.get_parameter('gain_ramp_start_ratio').value)
+        duration    = float(self.get_parameter('gain_ramp_duration_s').value)
+
+        if self.run_start_time is None:
+            self._current_gain_ratio = start_ratio
+            return
+
+        elapsed = now - self.run_start_time
+        if duration <= 0.0 or elapsed >= duration:
+            self._current_gain_ratio = 1.0
+        else:
+            t = elapsed / duration
+            self._current_gain_ratio = start_ratio + (1.0 - start_ratio) * t
+
     def _compose_target_force(self, pos_force_N, now, allow_loadcell):
+        """
+        F_target = F_pid - gain * F_loadcell
+
+        ロードセル符号: PAMに引っ張られている時 → 負
+        よって: -gain * (負) = +gain*|F| → 押し出し方向に加算 → 正しい
+        """
         self._last_pos_force_N = pos_force_N
         self._last_loadcell_comp_N = 0.0
 
@@ -291,10 +351,34 @@ class CylinderPositionController(Node):
         loadcell_force = 0.0 if self.current_loadcell is None else float(self.current_loadcell)
         loadcell_gain  = float(self.get_parameter('loadcell_ff_gain').value)
 
-        comp_force = loadcell_gain * loadcell_force
+        # F_target = F_pid - gain * F_loadcell
+        comp_force = -loadcell_gain * loadcell_force
         self._last_loadcell_comp_N = comp_force
 
         return self._clamp(pos_force_N + comp_force, -limit, limit)
+
+    # ── デバッグ一括パブリッシュ ──────────────────────────────────
+    def _publish_debug(self, x_ref_rel, x_rel):
+        self.pub_target_pos.publish(Float32(data=float(self.x_0 + x_ref_rel)))
+        self.pub_current_rel_pos.publish(Float32(data=float(x_rel)))
+        self.pub_position_error.publish(Float32(data=float(x_ref_rel - x_rel)))
+
+        self.pub_target_force.publish(Float32(data=float(self._target_force_N)))
+        self.pub_pid_force.publish(Float32(data=float(self._last_pos_force_N)))
+        self.pub_loadcell_comp.publish(Float32(data=float(self._last_loadcell_comp_N)))
+        self.pub_loadcell_raw.publish(Float32(
+            data=float(0.0 if self.current_loadcell is None else self.current_loadcell)))
+
+        self.pub_target_pH.publish(Float32(data=float(self._last_target_pH)))
+        self.pub_target_pR.publish(Float32(data=float(self._last_target_pR)))
+        self.pub_current_pH.publish(Float32(data=float(self.current_pH)))
+        self.pub_current_pR.publish(Float32(data=float(self.current_pR)))
+
+        self.pub_valve_uH.publish(Float32(data=float(self._last_uH)))
+        self.pub_valve_uR.publish(Float32(data=float(self._last_uR)))
+
+        self.pub_gain_ratio.publish(Float32(data=float(self._current_gain_ratio)))
+        self.pub_sine_amp.publish(Float32(data=float(self.current_sine_amp)))
 
     # ────────────────────────────────────────────────────────────
     # 外側ループ
@@ -319,6 +403,8 @@ class CylinderPositionController(Node):
             return
 
         self._outer_last_time = now
+
+        self._update_gain_ramp(now)
         self._update_gains()
 
         if self.state == ControllerState.RUNNING:
@@ -340,12 +426,12 @@ class CylinderPositionController(Node):
     # 各状態の処理
     # ────────────────────────────────────────────────────────────
     def _state_waiting_sensor(self, now):
-        self._send_all_exhaust()
+        homing_v = float(self.get_parameter('homing_head_voltage').value)
+        self._send_valve(homing_v, 0.0)
 
         if self.current_pos is not None:
             self.get_logger().info(
-                "Sensors connected. Exhausting both chambers → "
-                "finding PAM natural position..."
+                f"Sensors connected. Homing: head={homing_v}V, rod=0V"
             )
             self.state = ControllerState.HOMING
             self.homing_start_time = now
@@ -356,8 +442,9 @@ class CylinderPositionController(Node):
         settle_thresh = float(self.get_parameter('homing_settle_threshold').value)
         settle_dur    = float(self.get_parameter('homing_settle_duration').value)
         startup_wait  = float(self.get_parameter('homing_startup_wait').value)
+        homing_v      = float(self.get_parameter('homing_head_voltage').value)
 
-        self._send_all_exhaust()
+        self._send_valve(homing_v, 0.0)
 
         if now - self.homing_start_time < startup_wait:
             self.homing_last_pos = self.current_pos
@@ -371,14 +458,17 @@ class CylinderPositionController(Node):
             elif now - self.homing_settle_start > settle_dur:
                 self.x_0 = self.current_pos
                 self.get_logger().info(
-                    f"Homing complete. x_0 = {self.x_0:.4f} m (sine max end). "
-                    f"Starting RUNNING immediately."
+                    f"Homing complete. x_0 = {self.x_0:.4f} m (sine minimum end). "
+                    f"Starting RUNNING with gain ramp."
                 )
 
                 self.pid_pos.reset()
                 self.pid_pH.reset()
                 self.pid_pR.reset()
-                self._target_force_N  = 0.0
+                self._target_force_N     = 0.0
+                self._current_gain_ratio = float(
+                    self.get_parameter('gain_ramp_start_ratio').value
+                )
                 self._outer_last_time = time.monotonic()
                 self.run_start_time   = time.monotonic()
                 self.current_sine_amp = 0.0
@@ -392,18 +482,13 @@ class CylinderPositionController(Node):
 
     def _state_running(self, now, dt):
         """
-        片側正弦波追従。
+        x_ref_rel = A * (1 - cos(ωt))
 
-        x_ref_rel = -A * (1 - cos(ωt))
-
-        t=0    →  0   (x_0, 最大端 = スタート地点)
-        t=T/4  → -A   (振動中心)
-        t=T/2  → -2A  (最小端, 最も縮んだ位置)
-        t=3T/4 → -A   (振動中心)
-        t=T    →  0   (x_0 に戻る)
-
-        A は 0 から振幅ランプで徐々に増加するため、
-        スタート直後は x_0 付近で微小振動し、滑らかに振幅が広がる。
+        t=0    →  0    (x_0, 最小端)
+        t=T/4  → +A    (振動中心)
+        t=T/2  → +2A   (最大端)
+        t=3T/4 → +A    (振動中心)
+        t=T    →  0    (x_0 に戻る)
         """
         target_amp = max(0.0, float(self.get_parameter('sine_amplitude_m').value))
         freq       = float(self.get_parameter('sine_freq_hz').value)
@@ -411,7 +496,6 @@ class CylinderPositionController(Node):
 
         elapsed = now - self.run_start_time
 
-        # 振幅ランプ
         delta_amp = amp_rate * dt
         if self.current_sine_amp < target_amp:
             self.current_sine_amp = min(self.current_sine_amp + delta_amp, target_amp)
@@ -420,7 +504,6 @@ class CylinderPositionController(Node):
 
         A = self.current_sine_amp
 
-        # x_0 が最大端、そこから伸びる向のみ
         x_ref_rel = A * (1.0 - math.cos(2.0 * math.pi * freq * elapsed))
 
         x_rel = self._get_relative_pos()
@@ -430,8 +513,7 @@ class CylinderPositionController(Node):
             pos_force, now, allow_loadcell=True
         )
 
-        self.pub_target_pos.publish(Float32(data=float(self.x_0 + x_ref_rel)))
-        self.pub_current_rel_pos.publish(Float32(data=float(x_rel)))
+        self._publish_debug(x_ref_rel, x_rel)
 
     # ────────────────────────────────────────────────────────────
     # 推力 → 圧力目標 → 圧力 PI → バルブ電圧
@@ -440,37 +522,22 @@ class CylinderPositionController(Node):
         base_kpa = float(self.get_parameter('base_pressure_kpa').value)
         max_kpa  = float(self.get_parameter('supply_pressure_kpa').value)
 
-        target_pH = base_kpa
-        target_pR = base_kpa
+        delta_pH =  target_force_N / self.AREA_HEAD / 1000.0
+        delta_pR = -target_force_N / self.AREA_ROD  / 1000.0
 
-        if target_force_N > 0.0:
-            target_pH += target_force_N / self.AREA_HEAD / 1000.0
-        elif target_force_N < 0.0:
-            target_pR += (-target_force_N) / self.AREA_ROD / 1000.0
-
-        target_pH = self._clamp(target_pH, 0.0, max_kpa)
-        target_pR = self._clamp(target_pR, 0.0, max_kpa)
+        target_pH = self._clamp(base_kpa + delta_pH, 0.0, max_kpa)
+        target_pR = self._clamp(base_kpa + delta_pR, 0.0, max_kpa)
 
         uH = self.pid_pH.update(target_pH, self.current_pH, dt)
         uR = self.pid_pR.update(target_pR, self.current_pR, dt)
 
         self._send_valve(self.VALVE_NEUTRAL + uH, self.VALVE_NEUTRAL + uR)
 
-        msg = Float32MultiArray()
-        msg.data = [
-            float(target_pH),
-            float(self.current_pH),
-            float(target_pR),
-            float(self.current_pR),
-            float(uH),
-            float(uR),
-            float(target_force_N),
-            float(0.0 if self.current_loadcell is None else self.current_loadcell),
-            float(self._last_pos_force_N),
-            float(self._last_loadcell_comp_N),
-            float(self.current_sine_amp),
-        ]
-        self.pub_debug.publish(msg)
+        # デバッグ用に保持
+        self._last_target_pH = target_pH
+        self._last_target_pR = target_pR
+        self._last_uH = uH
+        self._last_uR = uR
 
 
 def main(args=None):
