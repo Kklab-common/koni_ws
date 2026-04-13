@@ -8,12 +8,13 @@ class SensorInterpreterNode(Node):
     """
     入力:
       /ai1616llpe/voltage : Float32MultiArray [V]
-      /cnt3204mtlpe       : Float32MultiArray 
+      /cnt3204mtlpe       : Float32MultiArray
     出力:
-      /sensors/cylinder_position : Float32 [m] 
+      /sensors/cylinder_position : Float32 [m]
       /sensors/head_pressure     : Float32 [kPa] (ヘッド側圧力)
       /sensors/rod_pressure      : Float32 [kPa] (ロッド側圧力)
       /sensors/loadcell_force    : Float32 [N]   (ロードセルの力)
+      /sensors/pam_pressure      : Float32 [kPa] (PAM圧力)
     """
     def __init__(self):
         super().__init__('sensor_interpreter')
@@ -27,8 +28,9 @@ class SensorInterpreterNode(Node):
 
         # 圧力センサ
         self.declare_parameter('ai_topic', '/ai1616llpe/voltage')
-        self.declare_parameter('head_pressure_index', 0) 
-        self.declare_parameter('rod_pressure_index', 1)  
+        self.declare_parameter('head_pressure_index', 0)
+        self.declare_parameter('rod_pressure_index', 1)
+        self.declare_parameter('pam_pressure_index', 5)
         self.declare_parameter('v0_pressure_head', 1.0)
         self.declare_parameter('v0_pressure_rod', 1.0)
         self.declare_parameter('slope_kPa_per_V_head', 250.0)
@@ -41,7 +43,7 @@ class SensorInterpreterNode(Node):
         self.declare_parameter('v0_loadcell', 0.0)
         self.declare_parameter('kg_per_V_loadcell', 7.9186)
         self.declare_parameter('gravity_acceleration', 9.80665)
-        self.declare_parameter('cutoff_hz_loadcell', 5.0) # ロードセルは振動を拾いやすいので強め(5Hz)
+        self.declare_parameter('cutoff_hz_loadcell', 5.0)
 
         self.cnt_topic   = self.get_parameter('cnt_topic').value
         self.ei          = self.get_parameter('encoder_index').value
@@ -52,6 +54,7 @@ class SensorInterpreterNode(Node):
         self.ai_topic    = self.get_parameter('ai_topic').value
         self.hi          = self.get_parameter('head_pressure_index').value
         self.ri          = self.get_parameter('rod_pressure_index').value
+        self.pi          = self.get_parameter('pam_pressure_index').value
         self.v0H_press   = self.get_parameter('v0_pressure_head').value
         self.v0R_press   = self.get_parameter('v0_pressure_rod').value
         self.kH_press    = self.get_parameter('slope_kPa_per_V_head').value
@@ -68,12 +71,14 @@ class SensorInterpreterNode(Node):
         self.lpf_enc  = LowPassFilter(self.cutoff_enc)
         self.lpf_head = LowPassFilter(self.cutoff_pres)
         self.lpf_rod  = LowPassFilter(self.cutoff_pres)
+        self.lpf_pam  = LowPassFilter(self.cutoff_pres)
         self.lpf_lc   = LowPassFilter(self.cutoff_lc)
 
         self.pub_pos_m      = self.create_publisher(Float32, '/sensors/cylinder_position', 10)
         self.pub_head_kpa   = self.create_publisher(Float32, '/sensors/head_pressure', 10)
         self.pub_rod_kpa    = self.create_publisher(Float32, '/sensors/rod_pressure', 10)
         self.pub_loadcell_n = self.create_publisher(Float32, '/sensors/loadcell_force', 10)
+        self.pub_pam_kpa    = self.create_publisher(Float32, '/sensors/pam_pressure', 10)
 
         self.sub_cnt = self.create_subscription(Float32MultiArray, self.cnt_topic, self._cb_count, 10)
         self.sub_ai  = self.create_subscription(Float32MultiArray, self.ai_topic, self._cb_voltage, 10)
@@ -118,7 +123,14 @@ class SensorInterpreterNode(Node):
 
             self.pub_head_kpa.publish(Float32(data=filtered_P_head))
             self.pub_rod_kpa.publish(Float32(data=filtered_P_rod))
-        
+
+        # PAM圧力センサの処理
+        if self.pi < len(arr):
+            V_pam = float(arr[self.pi])
+            raw_P_pam_kPa = (V_pam - self.v0H_press) * self.kH_press
+            filtered_P_pam = self.lpf_pam.update(raw_P_pam_kPa, current_time_sec)
+            self.pub_pam_kpa.publish(Float32(data=filtered_P_pam))
+
         # --- ロードセルの処理 ---
         if self.lc_p_idx < len(arr) and self.lc_m_idx < len(arr):
             # 生データ
