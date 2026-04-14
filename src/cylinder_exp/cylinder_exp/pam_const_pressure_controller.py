@@ -31,9 +31,9 @@ class PamPressureController(Node):
     PAM圧力制御ノード。
 
     入力:
-      /sensors/pam_pressure    : Float32 [kPa]
+      /sensors/pam_pressure : Float32 [kPa]
     出力:
-      /actuators/valve_voltage : Float32MultiArray [V]
+      /actuators/pam_valve  : Float32MultiArray [ch, volt]
 
     PI制御により pam_pressure を target_pressure_kpa に保つ。
     バルブは 0–10V, 5V 中立。
@@ -51,7 +51,7 @@ class PamPressureController(Node):
         self.declare_parameter('valve_channel', 3)
         self.declare_parameter('control_rate_hz', 500.0)
         self.declare_parameter('pressure_topic', '/sensors/pam_pressure')
-        self.declare_parameter('valve_topic', '/actuators/valve_voltage')
+        self.declare_parameter('valve_topic', '/actuators/pam_valve')
 
         kp             = float(self.get_parameter('kp').value)
         ki             = float(self.get_parameter('ki').value)
@@ -104,8 +104,7 @@ class PamPressureController(Node):
         valve_volt = max(0.0, min(10.0, self.VALVE_NEUTRAL + u))
 
         msg = Float32MultiArray()
-        msg.data = [self.VALVE_NEUTRAL] * 8
-        msg.data[self.channel] = valve_volt
+        msg.data = [float(self.channel), valve_volt]
         self.pub_valve.publish(msg)
 
         self.pub_debug_target.publish(Float32(data=target_kpa))
@@ -121,9 +120,8 @@ def main(args=None):
     except KeyboardInterrupt:
         node.get_logger().info("Shutting down...")
     finally:
-        # シャットダウン時にバルブを中立に戻す
         msg = Float32MultiArray()
-        msg.data = [PamPressureController.VALVE_NEUTRAL] * 8
+        msg.data = [float(node.channel), PamPressureController.VALVE_NEUTRAL]
         node.pub_valve.publish(msg)
         node.destroy_node()
         rclpy.shutdown()

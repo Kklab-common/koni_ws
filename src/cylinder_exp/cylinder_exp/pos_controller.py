@@ -187,7 +187,7 @@ class CylinderPositionController(Node):
 
         # ── パブリッシャ（個別名前付きトピック） ──────────────────
         self.pub_valve = self.create_publisher(
-            Float32MultiArray, '/actuators/valve_voltage', 10)
+            Float32MultiArray, '/actuators/cylinder_valves', 10)
 
         # 位置系
         self.pub_target_pos = self.create_publisher(
@@ -305,13 +305,18 @@ class CylinderPositionController(Node):
         volt_r = self._clamp(volt_r, 0.0, 10.0)
 
         msg = Float32MultiArray()
-        msg.data = [self.VALVE_NEUTRAL] * 8
-        msg.data[self.CH_HEAD] = volt_h
-        msg.data[self.CH_ROD]  = volt_r
+        msg.data = [
+            float(self.CH_HEAD), volt_h,
+            float(self.CH_ROD),  volt_r,]
         self.pub_valve.publish(msg)
 
     def _send_all_neutral(self):
-        self._send_valve(self.VALVE_NEUTRAL, self.VALVE_NEUTRAL)
+        msg = Float32MultiArray()
+        msg.data = [
+            float(self.CH_HEAD), self.VALVE_NEUTRAL,
+            float(self.CH_ROD),  self.VALVE_NEUTRAL,
+        ]
+        self.pub_valve.publish(msg)
 
     def _get_relative_pos(self):
         return self.current_pos - self.x_0
@@ -572,7 +577,6 @@ def main(args=None):
         node._send_all_neutral()
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
