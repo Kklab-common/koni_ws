@@ -13,6 +13,7 @@ def generate_launch_description():
             'ros2', 'bag', 'record',
             '-o', bag_dir,
             '-s', 'mcap',
+            '/actuators/cylinder_valves',
             '/sensors/cylinder_position',
             '/sensors/head_pressure',
             '/sensors/rod_pressure',
@@ -57,8 +58,8 @@ def generate_launch_description():
             name='sensor_interpreter_node',
             output='screen',
             parameters=[{
-                'head_pressure_index':  0,
-                'rod_pressure_index':   1,
+                'head_pressure_index':  1,
+                'rod_pressure_index':   3,
                 'loadcell_plus_index':  2,
                 'loadcell_minus_index': 3,
                 'pam_pressure_index':   5,
@@ -74,8 +75,8 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 # AOボードとの接続チャンネル
-                'ch_head': 0,
-                'ch_rod':  1,
+                'ch_head': 1,
+                'ch_rod':  3,
 
                 # ループ周期
                 'outer_rate_hz': 500.0,
@@ -88,18 +89,18 @@ def generate_launch_description():
 
                 # 圧力
                 'base_pressure_kpa':   150.0,
-                'supply_pressure_kpa': 640.0,
+                'supply_pressure_kpa': 600.0,
 
                 # 位置ループ PID
-                'pos_kp': 1500.0,
-                'pos_ki': 30.0,
+                'pos_kp': 100.0,
+                'pos_ki': 0.0,
                 'pos_kd': 0.0,
                 'pos_td': 1.0,
                 'pos_output_limit': 1000.0,
 
                 # 圧力ループ PI
-                'pres_kp': 0.016,
-                'pres_ki': 0.002,
+                'pres_kp': 0.0006,
+                'pres_ki': 0.00,
                 'pres_kd': 0.0,
                 'pres_td': 0.01,
                 'pres_output_limit': 4.9,
@@ -124,8 +125,8 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'target_pressure_kpa': 100.0,
-                'kp':                  0.02,
-                'ki':                  0.005,
+                'kp':                  0.0, # 0.02
+                'ki':                  0.0, # 0.005
                 'output_limit':        4.9,
                 'valve_channel':       3,
                 'control_rate_hz':     500.0,
