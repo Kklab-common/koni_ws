@@ -5,7 +5,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     return LaunchDescription([
 
-        # ── 1. AI ボードノード ────────────────────────────────────
+        # AI ボードノード
         Node(
             package='control_box',
             executable='ai1616llpe_test',
@@ -13,7 +13,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # ── 2. AO ボードノード ────────────────────────────────────
+        # AO ボードノード
         Node(
             package='control_box',
             executable='ao1608llpe_test',
@@ -21,7 +21,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # ── 3. カウンタボード（エンコーダ）ノード ─────────────────
+        # エンコーダノード
         Node(
             package='control_box',
             executable='cnt3204mtlpe_test',
@@ -29,7 +29,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # ── 4. 信号変換・フィルタノード ───────────────────────────
+        # 信号変換・フィルタノード
         Node(
             package='py_signal_processing',
             executable='analog_voltage_interpreter_cyl',
@@ -42,7 +42,7 @@ def generate_launch_description():
             }],
         ),
 
-        # ── 5. シリンダ位置制御ノード ─────────────────────────────
+        # シリンダ位置制御ノード
         Node(
             package='cylinder_exp',
             executable='pos_controller',

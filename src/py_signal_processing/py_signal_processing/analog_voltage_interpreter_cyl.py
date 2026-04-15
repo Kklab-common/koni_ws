@@ -109,7 +109,7 @@ class SensorInterpreterNode(Node):
         arr = msg.data
         current_time_sec = self.get_clock().now().nanoseconds / 1e9
         
-        # --- 圧力センサの処理 ---
+        # --- 圧力センサの処理 
         if self.hi < len(arr) and self.ri < len(arr):
             # 生データ
             V_head = float(arr[self.hi])
@@ -137,6 +137,8 @@ class SensorInterpreterNode(Node):
             V_plus = float(arr[self.lc_p_idx])
             V_minus = float(arr[self.lc_m_idx])
             V_net = (V_plus - V_minus) - self.lc_v0
+            # 符号逆バージョン
+            # V_net = (V_minus - V_plus) - self.lc_v0
             raw_force_N = (V_net * self.lc_kg_per_v) * self.gravity
             
             # フィルタ適用

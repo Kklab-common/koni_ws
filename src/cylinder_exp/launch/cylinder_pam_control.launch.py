@@ -1,11 +1,32 @@
 from launch import LaunchDescription
+from launch.actions import ExecuteProcess
 from launch_ros.actions import Node
+from datetime import datetime
+import os
 
 
 def generate_launch_description():
-    return LaunchDescription([
+    bag_dir = os.path.expanduser(
+        f'~/koni_ws/log/{datetime.now().strftime("%Y%m%d_%H%M%S")}')
+    bag_record = ExecuteProcess(
+        cmd=[
+            'ros2', 'bag', 'record',
+            '-o', bag_dir,
+            '-s', 'mcap',
+            '/sensors/cylinder_position',
+            '/sensors/head_pressure',
+            '/sensors/rod_pressure',
+            '/sensors/loadcell_force',
+            '/sensors/pam_pressure',
+            '/actuators/pam_valve',
+            '/debug/pam_valve_output_V',
+        ],
+        output='screen',
+    )
 
-        # ── 1. AI ボードノード ────────────────────────────────────
+    return LaunchDescription([
+        bag_record,
+        # AI ボードノード
         Node(
             package='control_box',
             executable='ai1616llpe_test',
@@ -13,7 +34,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # ── 2. AO ボードノード ────────────────────────────────────
+        # AO ボードノード
         Node(
             package='control_box',
             executable='ao1608llpe_test',
@@ -21,7 +42,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # ── 3. カウンタボード（エンコーダ）ノード ─────────────────
+        # カウンタボードノード
         Node(
             package='control_box',
             executable='cnt3204mtlpe_test',
@@ -29,7 +50,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # ── 4. 信号変換・フィルタノード ───────────────────────────
+        # 信号変換・フィルタノード 
         Node(
             package='py_signal_processing',
             executable='analog_voltage_interpreter_cyl',
@@ -45,15 +66,14 @@ def generate_launch_description():
             }],
         ),
 
-        # ── 5. シリンダ位置制御ノード ─────────────────────────────
+        # シリンダ位置制御ノード 
         Node(
             package='cylinder_exp',
             executable='pos_controller',
             name='cylinder_position_controller_node',
             output='screen',
             parameters=[{
-
-                # ハードウェア
+                # AOボードとの接続チャンネル
                 'ch_head': 0,
                 'ch_rod':  1,
 
@@ -70,14 +90,14 @@ def generate_launch_description():
                 'base_pressure_kpa':   150.0,
                 'supply_pressure_kpa': 640.0,
 
-                # 位置ループ PID（外側）
+                # 位置ループ PID
                 'pos_kp': 1500.0,
                 'pos_ki': 30.0,
                 'pos_kd': 0.0,
                 'pos_td': 1.0,
                 'pos_output_limit': 1000.0,
 
-                # 圧力ループ PI（内側）
+                # 圧力ループ PI
                 'pres_kp': 0.016,
                 'pres_ki': 0.002,
                 'pres_kd': 0.0,
@@ -96,7 +116,7 @@ def generate_launch_description():
             }],
         ),
 
-        # ── 6. PAM 定圧制御ノード ─────────────────────────────────
+        # PAM 定圧制御ノード
         Node(
             package='cylinder_exp',
             executable='pam_const_pressure_controller',
@@ -114,10 +134,8 @@ def generate_launch_description():
             }],
         ),
 
-        # ── 7. バルブ指令統合ノード ───────────────────────────────
-        # pos_controller (/actuators/cylinder_valves) と
-        # pam_const_pressure_controller (/actuators/pam_valve) の
-        # [ch, volt] 指令を統合し、8ch の /actuators/valve_voltage を出力。
+        # バルブ指令統合ノード
+        # pos_controller (/actuators/cylinder_valves) とpam_const_pressure_controller (/actuators/pam_valve) の　[ch, volt] 指令を統合し、8ch の /actuators/valve_voltage を出力。
         Node(
             package='cylinder_exp',
             executable='mixer_node',
