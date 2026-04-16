@@ -62,7 +62,7 @@ def generate_launch_description():
                 'rod_pressure_index':   3,
                 'loadcell_plus_index':  2,
                 'loadcell_minus_index': 3,
-                'pam_pressure_index':   5,
+                'pam_pressure_index':   4,
                 'cutoff_hz_pressure':   10.0,
             }],
         ),
@@ -128,7 +128,7 @@ def generate_launch_description():
                 'kp':                  0.0, # 0.02
                 'ki':                  0.0, # 0.005
                 'output_limit':        4.9,
-                'valve_channel':       3,
+                'valve_channel':       5,
                 'control_rate_hz':     500.0,
                 'pressure_topic':      '/sensors/pam_pressure',
                 'valve_topic':         '/actuators/pam_valve',

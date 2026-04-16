@@ -35,6 +35,7 @@ class SensorInterpreterNode(Node):
         self.declare_parameter('v0_pressure_rod', 1.0)
         self.declare_parameter('slope_kPa_per_V_head', 250.0)
         self.declare_parameter('slope_kPa_per_V_rod', 250.0)
+        self.declare_parameter('slope_kPa_per_V_pam', 25.25)
         self.declare_parameter('cutoff_hz_pressure', 20.0)
 
         # ロードセル
@@ -59,6 +60,7 @@ class SensorInterpreterNode(Node):
         self.v0R_press   = self.get_parameter('v0_pressure_rod').value
         self.kH_press    = self.get_parameter('slope_kPa_per_V_head').value
         self.kR_press    = self.get_parameter('slope_kPa_per_V_rod').value
+        self.kpam_press  = self.get_parameter('slope_kPa_per_V_pam').value
         self.cutoff_pres = self.get_parameter('cutoff_hz_pressure').value
 
         self.lc_p_idx    = self.get_parameter('loadcell_plus_index').value
@@ -127,7 +129,7 @@ class SensorInterpreterNode(Node):
         # PAM圧力センサの処理
         if self.pi < len(arr):
             V_pam = float(arr[self.pi])
-            raw_P_pam_kPa = (V_pam - self.v0H_press) * self.kH_press
+            raw_P_pam_kPa = (V_pam - self.v0H_press) * self.kpam_press
             filtered_P_pam = self.lpf_pam.update(raw_P_pam_kPa, current_time_sec)
             self.pub_pam_kpa.publish(Float32(data=filtered_P_pam))
 
